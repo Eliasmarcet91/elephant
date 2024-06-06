@@ -1,0 +1,429 @@
+#this is the full code acknowledgement to VIVEK dataset for binary classification
+#code is based on python using Google Colab
+
+from google.colab import files
+uploaded = files.upload()
+
+#make directory for your API file
+!mkdir ~/.kaggle
+!cp kaggle.json ~/.kaggle/
+
+#download dataset from kaggle using the api
+!kaggle datasets download -d vivmankar/asian-vs-african-elephant-image-classification
+#unzip the file
+!unzip asian-vs-african-elephant-image-classification.zip
+
+# Identify any bad images
+import os
+from PIL import Image
+
+def validate_images(directory):
+    corrupted_files = []
+
+    # Walk through directory and sub-directories
+    for dirpath, _, filenames in os.walk(directory):
+        print(f"Scanning directory: {dirpath}")
+
+        for image_file in filenames:
+            # Check for common image extensions
+            if image_file.lower().endswith(('.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif')):
+                image_path = os.path.join(dirpath, image_file)
+                try:
+                    with Image.open(image_path) as img:
+                        img.verify()
+                except Exception as e:
+                    corrupted_files.append(image_path)
+                    print(f"Error with {image_path}: {e}")
+
+    return corrupted_files
+
+# Example usage:
+directory = "/content/train"  # Code ran against test/train/valid folders to confirm validity
+corrupted_images = validate_images(directory)
+if corrupted_images:
+    print(f"Found {len(corrupted_images)} corrupted images.")
+else:
+    print("All images are valid!")
+
+#Verify count
+!ls dataset/test/Asian  | wc -l
+!ls dataset/train/Asian | wc -l
+
+
+
+#Display random images from the dataset
+
+import random
+import pathlib
+import matplotlib.pyplot as plt
+
+def plot_random_sample(data_dir: pathlib.PosixPath, num_samples=10):
+    """
+    Randomly selects images from random subfolders in the data directory and plots them.
+
+    :param data_dir: Path to the main data directory containing 'train', 'test', 'val' folders.
+    :param num_samples: Number of samples to select from each subfolder.
+    """
+    # Check if the main data directory exists
+    if not data_dir.exists():
+        print(f"Data directory {data_dir} does not exist.")
+        return
+    
+    # Loop over each dataset type: train, test, val
+    for dataset_type in ['/content/dataset/train', '/content/dataset/test']:
+        dataset_dir = data_dir / dataset_type
+        
+        # Check if the dataset directory exists
+        if not dataset_dir.exists():
+            print(f"{dataset_type} directory {dataset_dir} does not exist.")
+            continue
+        
+        # Get all subfolders in the current dataset directory
+        subfolders = [f for f in dataset_dir.iterdir() if f.is_dir()]
+        
+        if not subfolders:
+            print(f"No subfolders found in {dataset_dir}")
+            continue
+        
+        # Select a random subfolder
+        random_subfolder = random.choice(subfolders)
+        print(f"Selected random subfolder: {random_subfolder}")
+        
+        # Get all image files in the selected subfolder
+        image_files = [f for f in random_subfolder.iterdir() if f.is_file() and f.suffix in ['.jpg', '.jpeg', '.png']]
+        
+        if not image_files:
+            print(f"No images found in subfolder {random_subfolder}")
+            continue
+        
+        # Select random samples from the image files
+        random_samples = random.sample(image_files, min(num_samples, len(image_files)))
+        
+        # Define number of rows and columns for the plot
+        num_row = 2
+        num_col = 5
+
+        # Create a figure
+        fig, axes = plt.subplots(num_row, num_col, figsize=(3.5 * num_col, 3 * num_row))
+        # For every image
+        for i in range(num_row * num_col):
+            if i < len(random_samples):
+                # Read the image
+                img = plt.imread(str(random_samples[i]))
+                # Display the image
+                ax = axes[i // num_col, i % num_col]
+                ax.imshow(img)
+                # Set title as <train|test|validation>/<cat\dog>/<img_name>.jpg
+                ax.set_title('/'.join(random_samples[i].parts[-3:]))
+            else:
+                axes[i // num_col, i % num_col].axis('off')
+        
+        plt.tight_layout()
+        plt.show()
+
+# Example usage
+data_directory = pathlib.Path('/content/dataset/train/')
+plot_random_sample(data_directory)
+
+#Import some libraries
+
+
+import os
+import pathlib
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+tf.random.set_seed(42)
+from PIL import Image, ImageOps
+from IPython.display import display
+import warnings
+warnings.filterwarnings('ignore')
+from PIL import Image, ImageOps
+import matplotlib.pyplot as plt
+
+
+
+#Display an image in greyscale
+
+def plot_image(img: np.array):
+    plt.figure(figsize=(6, 6))
+    plt.imshow(img, cmap='gray');
+
+def plot_two_images(img1: np.array, img2: np.array):
+    _, ax = plt.subplots(1, 2, figsize=(12, 6))
+    ax[0].imshow(img1, cmap='gray')
+    ax[1].imshow(img2, cmap='gray');
+
+img = Image.open('/content/dataset/test/Asian/as_te1.jpg')
+img = ImageOps.grayscale(img)
+img = img.resize(size=(224, 224))
+plot_image(img=img)
+
+#Visualize array
+
+def get_pools(img: np.array, pool_size: int, stride: int) -> np.array:
+    # To store individual pools
+    pools = []
+
+    # Iterate over all row blocks (single block has `stride` rows)
+    for i in np.arange(img.shape[0], step=stride):
+        # Iterate over all column blocks (single block has `stride` columns)
+        for j in np.arange(img.shape[0], step=stride):
+
+            # Extract the current pool
+            mat = img[i:i+pool_size, j:j+pool_size]
+
+            # Make sure it's rectangular - has the shape identical to the pool size
+            if mat.shape == (pool_size, pool_size):
+                # Append to the list of pools
+                pools.append(mat)
+
+    # Return all pools as a Numpy array
+    return np.array(pools)
+img_pools = get_pools(img=np.array(img), pool_size=2, stride=2)
+img_pools
+
+
+#Max pool image
+def max_pooling(pools: np.array) -> np.array:
+    # Total number of pools
+    num_pools = pools.shape[0]
+    # Shape of the matrix after pooling - Square root of the number of pools
+    # Cast it to int, as Numpy will return it as float
+    # For example -> np.sqrt(16) = 4.0 -> int(4.0) = 4
+    tgt_shape = (int(np.sqrt(num_pools)), int(np.sqrt(num_pools)))
+    # To store the max values
+    pooled = []
+
+    # Iterate over all pools
+    for pool in pools:
+        # Append the max value only
+        pooled.append(np.max(pool))
+
+    # Reshape to target shape
+    return np.array(pooled).reshape(tgt_shape)
+
+max_pooled = max_pooling(pools=img_pools)
+max_pooled
+
+plot_two_images(img1=img, img2=max_pooled)
+
+
+
+#Convert files to 0s and 1s
+
+train_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1/255.0)
+valid_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1/255.0)
+
+
+#Resize the images
+#resize all the images to the same size
+test_data = train_datagen.flow_from_directory(
+    directory='/content/dataset/test/',
+    target_size=(224, 224),
+    class_mode='categorical',
+    batch_size=64,
+    seed=42
+)
+
+first_batch = test_data.next()
+
+#Visualize the resizing 
+def visualize_batch(batch: tf.keras.preprocessing.image.DirectoryIterator):
+    n = 64
+    num_row, num_col = 8, 8
+    fig, axes = plt.subplots(num_row, num_col, figsize=(3 * num_col, 3 * num_row))
+
+    for i in range(n):
+        img = np.array(batch[0][i] * 255, dtype='uint8')
+        ax = axes[i // num_col, i % num_col]
+        ax.imshow(img)
+
+    plt.tight_layout()
+    plt.show()
+
+
+visualize_batch(batch=first_batch)
+
+
+
+#convert the next dataset
+train_data = train_datagen.flow_from_directory(
+    directory='/content/dataset/train',
+    target_size=(224, 224),
+    class_mode='categorical',
+    batch_size=64,
+    seed=42
+)
+
+##################################################### MODEL IMPLEMENTATIONS ################################################################
+
+#MODEL 1
+model_1 = tf.keras.Sequential([
+    tf.keras.layers.Conv2D(filters=16, kernel_size=(3, 3), input_shape=(224, 224, 3), activation='relu'),
+    tf.keras.layers.MaxPool2D(pool_size=(2, 2), padding='same'),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(128, activation='relu'),
+    tf.keras.layers.Dense(2, activation='softmax')
+])
+
+model_1.compile(
+    loss=tf.keras.losses.categorical_crossentropy,
+    optimizer=tf.keras.optimizers.Adam(),
+    metrics=[tf.keras.metrics.BinaryAccuracy(name='accuracy')]
+)
+
+history_1 = model_1.fit(
+    train_data,
+    validation_data=test_data,
+    epochs=10
+)
+
+
+
+#MODEL 2
+model_2 = tf.keras.Sequential([
+    tf.keras.layers.Conv2D(filters=32, kernel_size=(3, 3), input_shape=(224, 224, 3), activation='relu'),
+    tf.keras.layers.MaxPool2D(pool_size=(2, 2), padding='same'),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(128, activation='relu'),
+    tf.keras.layers.Dense(2, activation='softmax')
+])
+
+model_2.compile(
+    loss=tf.keras.losses.categorical_crossentropy,
+    optimizer=tf.keras.optimizers.Adam(),
+    metrics=[tf.keras.metrics.BinaryAccuracy(name='accuracy')]
+)
+
+history_2 = model_2.fit(
+    train_data,
+    validation_data=test_data,
+    epochs=10
+)
+
+#MODEL 3
+
+model_3 = tf.keras.Sequential([
+    tf.keras.layers.Conv2D(filters=32, kernel_size=(3, 3), input_shape=(224, 224, 3), activation='relu'),
+    tf.keras.layers.MaxPool2D(pool_size=(2, 2), padding='same'),
+    tf.keras.layers.Conv2D(filters=32, kernel_size=(3, 3), activation='relu'),
+    tf.keras.layers.MaxPool2D(pool_size=(2, 2), padding='same'),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(128, activation='relu'),
+    tf.keras.layers.Dense(2, activation='softmax')
+])
+
+model_3.compile(
+    loss=tf.keras.losses.categorical_crossentropy,
+    optimizer=tf.keras.optimizers.Adam(),
+    metrics=[tf.keras.metrics.BinaryAccuracy(name='accuracy')]
+)
+
+history_3 = model_3.fit(
+    train_data,
+    validation_data=test_data,
+    epochs=10
+)
+
+
+
+##################################################### PREDICTION FOR THIS EXAMPLE MODEL 2 HAD THE HIGHEST ACCURACY AGAINST THE VAL DATA  #####################################
+
+def prepare_single_image(img_path: str) -> np.array:
+    img = Image.open(img_path)
+    img = img.resize(size=(224, 224))
+    return np.array(img) / 255.0
+
+#select an image from the test data
+single_image = prepare_single_image(img_path='/content/dataset/test/Asian/as_te16.jpg')
+single_prediction = model_2.predict(single_image.reshape(-1, 224, 224, 3))
+single_prediction
+
+#Convert the classification into words for visual representation
+# Define a dictionary mapping class indices to class labels
+class_labels = {0: "African Elephant", 1: "Asian Elephant"}
+
+# Convert the predicted probabilities to class labels
+predicted_class = np.argmax(single_prediction)
+
+# Get the corresponding label from the dictionary
+predicted_label = class_labels[predicted_class]
+
+print("Predicted Label:", predicted_label)
+
+
+
+
+# Save the model
+
+model_2.save('Elephant_model.h5')
+
+##############################################################  USER INTERACTION WITH THE MODEL ########################################################################
+
+
+#code will ask the user for an image, run the prediction
+#then it will display the image for the user and finally remove it usin os.remove
+#efficiently saving the storage space
+
+import numpy as np
+from PIL import Image
+import tensorflow as tf
+import matplotlib.pyplot as plt
+
+# Load your trained model
+model = tf.keras.models.load_model('/content/Elephant_model.h5')
+
+# Define class labels
+class_labels = {0: "African Elephant", 1: "Asian Elephant"}
+
+# Function to preprocess the uploaded image
+def preprocess_image(image):
+    img = Image.open(image)
+    # Resize image to match model input size
+    img = img.resize((224, 224))
+    # Normalize pixel values
+    img = np.array(img) / 255.0
+    # Add batch dimension
+    img = np.expand_dims(img, axis=0)
+    return img
+
+# Function to run prediction on the preprocessed image
+def predict_image(image):
+    img = preprocess_image(image)
+    predictions = model.predict(img)
+    predicted_class = np.argmax(predictions)
+    predicted_label = class_labels[predicted_class]
+    return predicted_label
+
+# File upload function
+def upload_file():
+    from google.colab import files
+    uploaded = files.upload()
+    for filename in uploaded.keys():
+        print('User uploaded file "{name}" with length {length} bytes'.format(
+            name=filename, length=len(uploaded[filename])))
+        # Run prediction on the uploaded image
+        prediction = predict_image(filename)
+        print("Prediction:", prediction)
+        # Display the uploaded image
+        display(Image.open(filename))
+        # Delete the uploaded image file
+        os.remove(filename)
+
+# Call the upload function
+upload_file()
+
+
+
+############# OUTPUT BASED ON AN IMAGE FROM GOOGLE THE IMAGE THAT WAS GIVEN TO THE MODEL WAS NOT PART OF THE TRAINING OR TEST DATASET #################################
+
+asian_elephant.jpg(image/jpeg) - 130044 bytes, last modified: n/a - 100% done
+
+Saving asian_elephant.jpg to asian_elephant.jpg
+User uploaded file "asian_elephant.jpg" with length 130044 bytes
+1/1 [==============================] - 0s 62ms/step
+Prediction: Asian Elephant
+
